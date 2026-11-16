@@ -184,6 +184,7 @@ A Zygote bundle is a self-contained archive packaged using standard PKZIP 2.0 fo
 ```
 run.zip
 ├── trace.json
+├── signature (optional, 64-byte raw Ed25519 signature over RFC 8785 canonical trace.json)
 ├── objects/
 │   ├── <64-hex-blake3-hash-1>
 │   ├── <64-hex-blake3-hash-2>
@@ -192,7 +193,7 @@ run.zip
 
 ### 4.2 Bundle Verification Rules
 1. **Path Traversal Protection (NFR-4.1, NFR-4.3):**
-   - Every entry path must start with either `trace.json` or `objects/<64-char-hex>`.
+   - Every entry path must start with either `trace.json`, `signature`, or `objects/<64-char-hex>`.
    - File names containing `..`, absolute paths starting with `/` or `\`, or entries writing outside the target world root must cause immediate rejection.
 2. **Object Integrity Verification (FR-4.3):**
    - For every object in `objects/<hex>`, the uncompressed object payload must be hashed with BLAKE3-256.
@@ -201,6 +202,10 @@ run.zip
    - For every step in `steps[]`, its `root` hash must be verified.
    - The root tree object must exist in `objects/`.
    - All subtrees and referenced file blobs must be recursively verified. Any missing referenced object must cause immediate rejection (`ErrMissingObject`).
+4. **Attestation & Cryptographic Signature (FR-4.8, OD-7):**
+   - When bundle signing is enabled, the manifest (`trace.json`) is canonicalized per RFC 8785 and signed using Ed25519.
+   - The resulting 64-byte signature is stored at `signature` in the bundle archive.
+   - Verifying tools configured with a public key must verify the signature against the RFC 8785 canonicalized manifest; any mismatch or missing signature must cause immediate rejection with exit code 2.
 
 ---
 
