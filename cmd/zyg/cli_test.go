@@ -3,6 +3,7 @@ package main_test
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/hex"
 	"io"
 	"os"
 	"os/exec"
@@ -197,3 +198,72 @@ func tamperZip(t *testing.T, src, dst, targetEntry string, mutate func([]byte) [
 		t.Fatalf("close dst zip: %v", err)
 	}
 }
+
+func TestCLIGarbageCollection(t *testing.T) {
+	zyg := buildZygBinary(t)
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "store")
+
+	store, err := vfs.NewDiskStore(storePath)
+	if err != nil {
+		t.Fatalf("NewDiskStore failed: %v", err)
+	}
+
+	world := vfs.NewWorld(store)
+	if err := world.WriteFile("active.txt", []byte("active content"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	snap := world.Snapshot()
+	snapHex := hex.EncodeToString(snap.Root[:])
+
+	// Put an orphan blob
+	orphanHash, err := store.Put([]byte("unreferenced orphan blob"))
+	if err != nil {
+		t.Fatalf("Put orphan failed: %v", err)
+	}
+
+	// 1. Test zyg gc --dry-run
+	cmdDry := exec.Command(zyg, "gc", "--store", storePath, "--keep", snapHex, "--dry-run", "--grace-period", "0s")
+	out, err := cmdDry.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg gc --dry-run failed: %v\noutput: %s", err, string(out))
+	}
+	if !bytes.Contains(out, []byte("[dry-run] Garbage collection summary:")) {
+		t.Fatalf("expected dry-run header, got: %s", string(out))
+	}
+	// Verify orphan still exists
+	if _, ok := store.Get(orphanHash); !ok {
+		t.Fatalf("dry-run should not delete objects")
+	}
+
+	// 2. Test zyg gc invalid keep hash -> exit code 3
+	cmdBad := exec.Command(zyg, "gc", "--store", storePath, "--keep", "invalid-hash")
+	out, err = cmdBad.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error on invalid keep hash, got success: %s", string(out))
+	}
+	if cmdBad.ProcessState.ExitCode() != 3 {
+		t.Fatalf("expected exit code 3, got %d", cmdBad.ProcessState.ExitCode())
+	}
+
+	// 3. Test zyg gc real run
+	cmdReal := exec.Command(zyg, "gc", "--store", storePath, "--keep", snapHex, "--grace-period", "0s")
+	out, err = cmdReal.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg gc real failed: %v\noutput: %s", err, string(out))
+	}
+	if !bytes.Contains(out, []byte("Garbage collection complete:")) {
+		t.Fatalf("expected completion message, got: %s", string(out))
+	}
+
+	// Verify orphan was pruned
+	if _, ok := store.Get(orphanHash); ok {
+		t.Fatalf("orphan blob should have been pruned")
+	}
+
+	// Verify active snapshot is still valid
+	if err := vfs.Verify(t.Context(), store, snap); err != nil {
+		t.Fatalf("active snapshot failed verification after GC: %v", err)
+	}
+}
+
