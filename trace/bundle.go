@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mindfire/zygote/pkg/compress"
 	"github.com/mindfire/zygote/vfs"
 	"lukechampine.com/blake3"
 )
@@ -26,15 +27,26 @@ var (
 	ErrPathTraversal = errors.New("corrupt bundle: path traversal detected")
 )
 
+// ExportOptions specifies configuration options for exporting a bundle.
+type ExportOptions struct {
+	PrivateKey []byte // Detached Ed25519 private signing key (FR-4.8, OD-7)
+	Compress   bool   // Enable Zstandard compression for objects inside the bundle (FR-4.10)
+}
+
 // ExportFile writes a highly portable zip bundle containing the Recording manifest
 // and all reachable cryptographically hashed vfs objects.
 func ExportFile(filename string, store vfs.Store, rec Recording) error {
-	return ExportSignedFile(filename, store, rec, nil)
+	return ExportBundle(filename, store, rec, ExportOptions{})
 }
 
 // ExportSignedFile writes a zip bundle with an optional detached Ed25519 signature
 // over the canonicalized manifest (trace.json per RFC 8785) (FR-4.8, OD-7).
 func ExportSignedFile(filename string, store vfs.Store, rec Recording, privKey []byte) error {
+	return ExportBundle(filename, store, rec, ExportOptions{PrivateKey: privKey})
+}
+
+// ExportBundle writes a zip bundle with configurable signature and compression options (FR-4.8, FR-4.10).
+func ExportBundle(filename string, store vfs.Store, rec Recording, opts ExportOptions) error {
 	f, err := os.Create(filename) //nolint:gosec
 	if err != nil {
 		return err
@@ -57,8 +69,8 @@ func ExportSignedFile(filename string, store vfs.Store, rec Recording, privKey [
 	}
 
 	// 2. If private key provided, sign canonical manifest and write "signature" entry
-	if len(privKey) > 0 {
-		sig, err := SignManifest(rec, privKey)
+	if len(opts.PrivateKey) > 0 {
+		sig, err := SignManifest(rec, opts.PrivateKey)
 		if err != nil {
 			return fmt.Errorf("signing manifest: %w", err)
 		}
@@ -88,7 +100,7 @@ func ExportSignedFile(filename string, store vfs.Store, rec Recording, privKey [
 		return err
 	}
 
-	// 4. Write objects
+	// 4. Write objects (optionally compressed with Zstandard)
 	for hash := range reachable {
 		if hash == vfs.EmptyTreeHash {
 			continue
@@ -98,11 +110,26 @@ func ExportSignedFile(filename string, store vfs.Store, rec Recording, privKey [
 			return fmt.Errorf("missing object in store: %x", hash)
 		}
 
-		objFile, err := zw.Create("objects/" + hex.EncodeToString(hash[:]))
+		payload := data
+		method := uint16(zip.Deflate)
+
+		if opts.Compress {
+			compressed := compress.Compress(data)
+			if len(compressed) < len(data) {
+				payload = compressed
+				method = zip.Store // Already compressed with zstd, store directly without redundant deflate
+			}
+		}
+
+		header := &zip.FileHeader{
+			Name:   "objects/" + hex.EncodeToString(hash[:]),
+			Method: method,
+		}
+		objFile, err := zw.CreateHeader(header)
 		if err != nil {
 			return err
 		}
-		if _, err := objFile.Write(data); err != nil {
+		if _, err := objFile.Write(payload); err != nil {
 			return err
 		}
 	}
@@ -177,10 +204,20 @@ func ImportVerifiedFile(filename string, store vfs.Store, pubKey []byte) (Bundle
 			if err != nil {
 				return Bundle{}, err
 			}
-			data, err := io.ReadAll(rc)
+			raw, err := io.ReadAll(rc)
 			_ = rc.Close()
 			if err != nil {
 				return Bundle{}, err
+			}
+
+			data := raw
+			if compress.IsCompressed(raw) {
+				if decompressed, err := compress.Decompress(raw); err == nil {
+					actualHash := blake3.Sum256(decompressed)
+					if bytes.Equal(actualHash[:], expectedHash) {
+						data = decompressed
+					}
+				}
 			}
 
 			actualHash := blake3.Sum256(data)

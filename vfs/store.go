@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mindfire/zygote/pkg/compress"
 	"lukechampine.com/blake3"
 )
 
@@ -108,8 +109,9 @@ func (s *MemStore) Stat(h Hash) (ObjectInfo, error) {
 
 // DiskStore is an on-disk implementation of Store.
 type DiskStore struct {
-	mu   sync.RWMutex
-	root string
+	mu       sync.RWMutex
+	root     string
+	compress bool
 }
 
 // NewDiskStore creates a new DiskStore, creating the root directory if necessary.
@@ -118,6 +120,30 @@ func NewDiskStore(root string) (*DiskStore, error) {
 		return nil, err
 	}
 	return &DiskStore{root: root}, nil
+}
+
+// NewCompressedDiskStore creates a new DiskStore with Zstandard compression enabled (FR-4.10).
+func NewCompressedDiskStore(root string) (*DiskStore, error) {
+	s, err := NewDiskStore(root)
+	if err != nil {
+		return nil, err
+	}
+	s.compress = true
+	return s, nil
+}
+
+// SetCompression enables or disables transparent Zstandard compression for newly written objects.
+func (s *DiskStore) SetCompression(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.compress = enabled
+}
+
+// IsCompressed reports whether compression is enabled on the DiskStore.
+func (s *DiskStore) IsCompressed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.compress
 }
 
 // Root returns the root directory path of the DiskStore.
@@ -163,7 +189,15 @@ func (s *DiskStore) Put(b []byte) (Hash, error) {
 	_, _ = rand.Read(rnd[:])
 	tmpPath := path + ".tmp" + hex.EncodeToString(rnd[:])
 
-	if err := os.WriteFile(tmpPath, b, 0o444); err != nil { //nolint:gosec
+	payload := b
+	if s.compress {
+		compressed := compress.Compress(b)
+		if len(compressed) < len(b) {
+			payload = compressed
+		}
+	}
+
+	if err := os.WriteFile(tmpPath, payload, 0o444); err != nil { //nolint:gosec
 		return hash, err
 	}
 
@@ -175,7 +209,7 @@ func (s *DiskStore) Put(b []byte) (Hash, error) {
 	return hash, nil
 }
 
-// Get retrieves a blob from disk by its hash.
+// Get retrieves a blob from disk by its hash, automatically decompressing if zstd-compressed.
 func (s *DiskStore) Get(h Hash) ([]byte, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -187,7 +221,20 @@ func (s *DiskStore) Get(h Hash) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return b, true
+
+	if compress.IsCompressed(b) {
+		if decompressed, err := compress.Decompress(b); err == nil {
+			if Hash(blake3.Sum256(decompressed)) == h {
+				return decompressed, true
+			}
+		}
+	}
+
+	if Hash(blake3.Sum256(b)) == h {
+		return b, true
+	}
+
+	return nil, false
 }
 
 // Delete removes an object file from disk by its hash.

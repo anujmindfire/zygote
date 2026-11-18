@@ -267,3 +267,58 @@ func TestCLIGarbageCollection(t *testing.T) {
 	}
 }
 
+func TestCLIZstdCompression(t *testing.T) {
+	zyg := buildZygBinary(t)
+	tmpDir := t.TempDir()
+
+	// 1. Create an uncompressed bundle
+	bundlePath := filepath.Join(tmpDir, "uncompressed.zip")
+	store := vfs.NewMemStore()
+	r := trace.Record(store)
+	r.Set("agent", "zstd-cli-agent")
+	r.Step("init")
+	largeData := bytes.Repeat([]byte("line of code in a large repository file\n"), 150)
+	if err := r.World().WriteFile("main.go", largeData, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	r.Step("step1")
+	rec := r.Recording()
+	if err := trace.ExportFile(bundlePath, store, rec); err != nil {
+		t.Fatalf("ExportFile failed: %v", err)
+	}
+
+	// 2. Redact with --compress flag
+	compressedBundle := filepath.Join(tmpDir, "compressed.zip")
+	policyPath := filepath.Join(tmpDir, "redact.yaml")
+	if err := os.WriteFile(policyPath, []byte("rules: []\n"), 0600); err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
+
+	cmdRedact := exec.Command(zyg, "redact", bundlePath, "--policy", policyPath, "--out", compressedBundle, "--compress")
+	out, err := cmdRedact.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg redact --compress failed: %v\noutput: %s", err, string(out))
+	}
+
+	// 3. Inspect compressed bundle via zyg inspect
+	cmdInspect := exec.Command(zyg, "inspect", compressedBundle, "--meta")
+	out, err = cmdInspect.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg inspect failed on compressed bundle: %v\noutput: %s", err, string(out))
+	}
+	if !bytes.Contains(out, []byte("zstd-cli-agent")) {
+		t.Fatalf("expected metadata to be read from compressed bundle, got: %s", string(out))
+	}
+
+	// 4. Verify compressed bundle via zyg verify
+	cmdVerify := exec.Command(zyg, "verify", compressedBundle)
+	out, err = cmdVerify.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg verify failed on compressed bundle: %v\noutput: %s", err, string(out))
+	}
+	if !bytes.Contains(out, []byte("Bundle integrity valid")) {
+		t.Fatalf("expected bundle integrity valid, got: %s", string(out))
+	}
+}
+
+

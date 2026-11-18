@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	redactPolicy string
-	redactOut    string
-	redactSign   bool
-	redactKey    string
+	redactPolicy   string
+	redactOut      string
+	redactSign     bool
+	redactKey      string
+	redactCompress bool
 )
 
 var redactCmd = &cobra.Command{
@@ -57,7 +58,11 @@ var redactCmd = &cobra.Command{
 			privKey = pk
 		}
 
-		if err := trace.ExportSignedFile(redactOut, cleanBundle.Store, cleanBundle.Recording, privKey); err != nil {
+		opts := trace.ExportOptions{
+			PrivateKey: privKey,
+			Compress:   redactCompress,
+		}
+		if err := trace.ExportBundle(redactOut, cleanBundle.Store, cleanBundle.Recording, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "Error exporting redacted bundle: %v\n", err)
 			os.Exit(3)
 		}
@@ -71,5 +76,6 @@ func init() {
 	redactCmd.Flags().StringVarP(&redactOut, "out", "o", "clean.zip", "Output bundle file")
 	redactCmd.Flags().BoolVar(&redactSign, "sign", false, "Cryptographically sign bundle with an Ed25519 private key")
 	redactCmd.Flags().StringVar(&redactKey, "key", "", "Path to Ed25519 private key file")
+	redactCmd.Flags().BoolVar(&redactCompress, "compress", false, "Enable Zstandard (zstd) compression for bundle objects (FR-4.10)")
 	rootCmd.AddCommand(redactCmd)
 }

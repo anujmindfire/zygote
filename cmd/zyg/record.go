@@ -21,8 +21,9 @@ var (
 	recordAgent string
 	recordDir   string
 	recordOut   string
-	recordSign  bool
-	recordKey   string
+	recordSign     bool
+	recordKey      string
+	recordCompress bool
 )
 
 func runRecord() int {
@@ -129,7 +130,11 @@ func runRecord() int {
 		privKey = pk
 	}
 
-	if err := trace.ExportSignedFile(recordOut, cleanBundle.Store, cleanBundle.Recording, privKey); err != nil {
+	opts := trace.ExportOptions{
+		PrivateKey: privKey,
+		Compress:   recordCompress,
+	}
+	if err := trace.ExportBundle(recordOut, cleanBundle.Store, cleanBundle.Recording, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "Error exporting bundle: %v\n", err)
 		return 3
 	}
@@ -152,5 +157,6 @@ func init() {
 	recordCmd.Flags().StringVarP(&recordOut, "out", "o", "run.zip", "Output bundle file")
 	recordCmd.Flags().BoolVar(&recordSign, "sign", false, "Cryptographically sign bundle with an Ed25519 private key")
 	recordCmd.Flags().StringVar(&recordKey, "key", "", "Path to Ed25519 private key file")
+	recordCmd.Flags().BoolVar(&recordCompress, "compress", false, "Enable Zstandard (zstd) compression for bundle objects (FR-4.10)")
 	rootCmd.AddCommand(recordCmd)
 }
