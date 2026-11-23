@@ -45,6 +45,11 @@ func (r *RunRecorder) Recorder() *journal.Recorder {
 
 // Step captures the current world state and effect count as a named boundary.
 func (r *RunRecorder) Step(name string) {
+	r.StepWithActor(name, "")
+}
+
+// StepWithActor captures the current world state and effect count as a named boundary for an actor.
+func (r *RunRecorder) StepWithActor(name, actor string) {
 	snap := r.world.Snapshot()
 	effs := len(r.journal.Entries())
 
@@ -53,6 +58,7 @@ func (r *RunRecorder) Step(name string) {
 		Name:    name,
 		Root:    hex.EncodeToString(snap.Root[:]),
 		Effects: effs,
+		Actor:   actor,
 	}
 
 	r.steps = append(r.steps, step)
@@ -116,6 +122,12 @@ func (r *RunReplayer) World() *vfs.World {
 
 // Step verifies the current world against the next expected step in the bundle.
 func (r *RunReplayer) Step(name string) (Check, error) {
+	return r.StepWithActor(name, "")
+}
+
+// StepWithActor verifies the current world against the next expected step in the bundle,
+// validating the actor if attributed.
+func (r *RunReplayer) StepWithActor(name, actor string) (Check, error) {
 	if r.stepIdx >= len(r.bundle.Recording.Steps) {
 		return Check{}, &journal.DivergenceError{Class: journal.ClassExhausted, Message: "agent executed more steps than recorded", Step: r.stepIdx}
 	}
@@ -123,6 +135,14 @@ func (r *RunReplayer) Step(name string) (Check, error) {
 	expectedStep := r.bundle.Recording.Steps[r.stepIdx]
 	if expectedStep.Name != name {
 		return Check{}, &journal.DivergenceError{Class: journal.ClassStepMismatch, Message: fmt.Sprintf("expected %q, got %q", expectedStep.Name, name), Step: r.stepIdx}
+	}
+
+	if expectedStep.Actor != "" && actor != "" && expectedStep.Actor != actor {
+		return Check{}, &journal.DivergenceError{
+			Class:   journal.ClassStepMismatch,
+			Message: fmt.Sprintf("step %q expected actor %q, got %q", name, expectedStep.Actor, actor),
+			Step:    r.stepIdx,
+		}
 	}
 
 	actualSnap := r.world.Snapshot()
@@ -140,6 +160,7 @@ func (r *RunReplayer) Step(name string) (Check, error) {
 	}
 
 	r.stepIdx++
+	r.replayer.SetStep(r.stepIdx)
 	if !chk.Match {
 		return chk, &journal.DivergenceError{
 			Class:   journal.ClassWorldMismatch,

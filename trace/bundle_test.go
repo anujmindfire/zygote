@@ -270,3 +270,99 @@ func TestZstdCompressedBundle(t *testing.T) {
 	}
 }
 
+func TestMultiActorRecordingAndReplay(t *testing.T) {
+	store1 := vfs.NewMemStore()
+	r := trace.Record(store1)
+	r.Set("agent", "multi-actor-agent")
+
+	r.StepWithActor("init", "agent-alpha")
+
+	// Actor Alpha records an effect and writes a file
+	_, err := r.Recorder().RecordWithActor("agent-alpha", "model", "prompt-1", func() ([]byte, error) {
+		return []byte("alpha-code"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.World().WriteFile("alpha.txt", []byte("from-alpha"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.StepWithActor("step-alpha", "agent-alpha")
+
+	// Actor Beta records an effect and writes a file
+	_, err = r.Recorder().RecordWithActor("agent-beta", "tool", "cmd-1", func() ([]byte, error) {
+		return []byte("beta-output"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.World().WriteFile("beta.txt", []byte("from-beta"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.StepWithActor("step-beta", "agent-beta")
+
+	rec := r.Recording()
+	if len(rec.Steps) != 3 {
+		t.Fatalf("Expected 3 steps, got %d", len(rec.Steps))
+	}
+	if rec.Steps[1].Actor != "agent-alpha" || rec.Steps[2].Actor != "agent-beta" {
+		t.Fatalf("Step actor attribution mismatch: %+v", rec.Steps)
+	}
+	if len(rec.Effects) != 2 {
+		t.Fatalf("Expected 2 effects, got %d", len(rec.Effects))
+	}
+	if rec.Effects[0].Actor != "agent-alpha" || rec.Effects[1].Actor != "agent-beta" {
+		t.Fatalf("Effect actor attribution mismatch: %+v", rec.Effects)
+	}
+
+	// Export and re-import bundle
+	tmpDir := t.TempDir()
+	bundlePath := filepath.Join(tmpDir, "multiactor.zip")
+	if err := trace.ExportFile(bundlePath, store1, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	store2 := vfs.NewMemStore()
+	bundle, err := trace.ImportFile(bundlePath, store2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Replay run
+	replayer, err := trace.Replay(store2, &bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Replay Alpha effect & step
+	effVal, err := replayer.Replayer().ReplayWithActor("agent-alpha", "model", "prompt-1")
+	if err != nil || string(effVal) != "alpha-code" {
+		t.Fatalf("ReplayWithActor alpha failed: %v", err)
+	}
+
+	if err := replayer.World().WriteFile("alpha.txt", []byte("from-alpha"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	chk, err := replayer.StepWithActor("step-alpha", "agent-alpha")
+	if err != nil || !chk.Match {
+		t.Fatalf("StepWithActor alpha failed: match=%v err=%v", chk.Match, err)
+	}
+
+	// Replay Beta effect & step
+	effVal2, err := replayer.Replayer().ReplayWithActor("agent-beta", "tool", "cmd-1")
+	if err != nil || string(effVal2) != "beta-output" {
+		t.Fatalf("ReplayWithActor beta failed: %v", err)
+	}
+
+	if err := replayer.World().WriteFile("beta.txt", []byte("from-beta"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	chk2, err := replayer.StepWithActor("step-beta", "agent-beta")
+	if err != nil || !chk2.Match {
+		t.Fatalf("StepWithActor beta failed: match=%v err=%v", chk2.Match, err)
+	}
+}
+
+

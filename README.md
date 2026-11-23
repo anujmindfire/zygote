@@ -194,10 +194,11 @@ buried.
   a clock read through an uninstrumented path — is not captured. zygote
   *detects* it as divergence with no corresponding code change, which is itself
   a useful bug report.
-- **Concurrency is not solved.** The effect log is one ordered sequence, so a
-  run whose effects are issued concurrently replays faithfully only if that
-  ordering is itself deterministic. Multi-agent runs need per-actor journals and
-  a recorded interleaving. Design target, not a shipped feature.
+- **Concurrency & Multi-Actor Runs.** Multi-agent runs and parallel tools are
+  supported via per-actor journal streams and recorded interleaving schedules
+  (FR-8.6, OD-4). Concurrent actors submit effects tagged with actor identifiers;
+  the deterministic replay scheduler coordinates effect substitution according to
+  the recorded interleaving sequence.
 - **Adapters have honest fidelity tiers.** Tier A captures every file at any
   point (`localdir`). Tier B captures state at step boundaries only. Tier C
   captures only what the runtime chooses to expose.

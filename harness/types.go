@@ -47,9 +47,19 @@ type HandshakeResult struct {
 
 // EffectParams payload.
 type EffectParams struct {
-	Op    string `json:"op"`
-	Key   string `json:"key"`
-	Value []byte `json:"value,omitempty"` // populated on record
+	Op       string `json:"op"`
+	Key      string `json:"key"`
+	Value    []byte `json:"value,omitempty"` // populated on record
+	Actor    string `json:"actor,omitempty"`
+	ThreadID string `json:"thread_id,omitempty"` // alias for actor
+}
+
+// GetActor returns the actor identifier or thread_id if specified.
+func (p *EffectParams) GetActor() string {
+	if p.Actor != "" {
+		return p.Actor
+	}
+	return p.ThreadID
 }
 
 // EffectResult payload.
@@ -59,7 +69,17 @@ type EffectResult struct {
 
 // StepParams payload.
 type StepParams struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Actor    string `json:"actor,omitempty"`
+	ThreadID string `json:"thread_id,omitempty"` // alias for actor
+}
+
+// GetActor returns the actor identifier or thread_id if specified.
+func (p *StepParams) GetActor() string {
+	if p.Actor != "" {
+		return p.Actor
+	}
+	return p.ThreadID
 }
 
 // StepResult payload.

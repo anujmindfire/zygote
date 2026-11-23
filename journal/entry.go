@@ -6,10 +6,12 @@ import "fmt"
 // Entry represents a single nondeterministic effect recorded during an agent's run.
 // This struct strictly conforms to the zygote SRS format specification.
 type Entry struct {
-	Seq   int    `json:"seq"`
-	Op    string `json:"op"`  // e.g., "model", "clock", "tool:<name>", "http"
-	Key   string `json:"key"` // request identity within the category
-	Value []byte `json:"value"`
+	Seq      int    `json:"seq"`
+	Actor    string `json:"actor,omitempty"`
+	ActorSeq int    `json:"actor_seq,omitempty"`
+	Op       string `json:"op"`  // e.g., "model", "clock", "tool:<name>", "http"
+	Key      string `json:"key"` // request identity within the category
+	Value    []byte `json:"value"`
 }
 
 // DivergenceClass represents the taxonomy of divergence defined in SRS §8.4.

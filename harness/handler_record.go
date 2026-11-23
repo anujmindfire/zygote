@@ -23,14 +23,24 @@ func (h *RecordHandler) Handshake(_ int) (int, error) {
 
 // Effect records the effect and returns the value back to the agent.
 func (h *RecordHandler) Effect(op, key string, value []byte) ([]byte, error) {
-	return h.r.Recorder().Record(op, key, func() ([]byte, error) {
+	return h.EffectWithActor("", op, key, value)
+}
+
+// EffectWithActor records the effect for a specific actor and returns the value.
+func (h *RecordHandler) EffectWithActor(actor, op, key string, value []byte) ([]byte, error) {
+	return h.r.Recorder().RecordWithActor(actor, op, key, func() ([]byte, error) {
 		return value, nil
 	})
 }
 
 // Step captures the world state boundary.
 func (h *RecordHandler) Step(name string) (*StepResult, error) {
-	h.r.Step(name)
+	return h.StepWithActor("", name)
+}
+
+// StepWithActor captures the world state boundary for a specific actor.
+func (h *RecordHandler) StepWithActor(actor, name string) (*StepResult, error) {
+	h.r.StepWithActor(name, actor)
 
 	// Record doesn't match against anything, just returns success.
 	// We return the actual hash of the step we just took.

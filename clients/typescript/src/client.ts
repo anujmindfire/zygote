@@ -76,15 +76,22 @@ export class ZygoteClient {
         return res?.version ?? version;
     }
 
-    async step(name: string): Promise<any> {
-        return await this.call('step', { name });
+    async step(name: string, actor?: string): Promise<any> {
+        const params: any = { name };
+        if (actor !== undefined) {
+            params.actor = actor;
+        }
+        return await this.call('step', params);
     }
 
-    async effect(op: string, key: string, value?: Uint8Array): Promise<Uint8Array> {
+    async effect(op: string, key: string, value?: Uint8Array, actor?: string): Promise<Uint8Array> {
         const params: any = { op, key };
 
         if (value) {
             params.value = Buffer.from(value).toString('base64');
+        }
+        if (actor !== undefined) {
+            params.actor = actor;
         }
 
         const res = await this.call('effect', params);

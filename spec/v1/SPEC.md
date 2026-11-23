@@ -140,6 +140,10 @@ The manifest is written to `trace.json` within each run recording and bundle.
             "description": "64-character lowercase hexadecimal BLAKE3 root hash"
           },
           "effects": { "type": "integer", "minimum": 0 },
+          "actor": {
+            "type": "string",
+            "description": "Optional actor/thread identifier attributing the step"
+          },
           "metadata": {
             "type": "object",
             "additionalProperties": { "type": "string" }
@@ -153,7 +157,9 @@ The manifest is written to `trace.json` within each run recording and bundle.
         "type": "object",
         "required": ["seq", "op", "key", "value"],
         "properties": {
-          "seq": { "type": "integer", "minimum": 0 },
+          "seq": { "type": "integer", "minimum": 0, "description": "Global interleaving sequence index" },
+          "actor": { "type": "string", "description": "Actor/thread identifier" },
+          "actor_seq": { "type": "integer", "minimum": 0, "description": "Per-actor monotonically increasing sequence index" },
           "op": { "type": "string" },
           "key": { "type": "string" },
           "value": {
@@ -247,7 +253,9 @@ Interception boundary for non-deterministic external calls (LLM completions, ran
   {
     "op": "model",
     "key": "prompt-hash-or-id",
-    "value": "base64-bytes-on-record"
+    "value": "base64-bytes-on-record",
+    "actor": "worker-1",
+    "thread_id": "optional-alias-for-actor"
   }
   ```
 - **Result:**
@@ -257,15 +265,16 @@ Interception boundary for non-deterministic external calls (LLM completions, ran
   }
   ```
 - **Semantics:**
-  - **On Record:** Agent invokes external effect, sends value to harness. Harness appends to journal and returns value.
-  - **On Replay:** Agent calls harness with `op` and `key`. Harness checks next sequential entry. If matching, harness returns recorded `value` (the external function is **never invoked**). If mismatched or exhausted, harness aborts and triggers divergence.
+  - **On Record:** Agent invokes external effect, sends value to harness. Harness appends to per-actor journal stream and global interleaving schedule, returning the value.
+  - **On Replay:** Agent calls harness with `op`, `key`, and optional `actor`. In `SchedulerStrict` (default), harness coordinates requests via the recorded interleaving schedule, waiting for the designated actor's turn. If matching, harness returns recorded `value` (the external function is **never invoked**). If mismatched or exhausted, harness aborts and triggers divergence.
 
 #### 3. `step`
 Marks a logical checkpoint boundary and compares or captures world state.
 - **Params:**
   ```json
   {
-    "name": "plan_phase"
+    "name": "plan_phase",
+    "actor": "worker-1"
   }
   ```
 - **Result:**
@@ -277,8 +286,14 @@ Marks a logical checkpoint boundary and compares or captures world state.
   }
   ```
 - **Semantics:**
-  - **On Record:** Captures current filesystem world hash and step metadata.
-  - **On Replay:** Verifies actual replayed world hash against recorded step root.
+  - **On Record:** Harness snapshots the current Virtual File System root hash, captures step boundary, and records optional actor attribution.
+  - **On Replay:** Harness compares the replayed root hash and actor against the recorded step boundary. If unequal, triggers `world-mismatch` or `step-mismatch`.
+
+### 5.1 Multi-Actor Concurrency & Interleaving Model (OD-4, §8.6)
+In multi-agent and multi-threaded agent systems, concurrent actors submit non-deterministic effects in interleaved order:
+1. **Per-Actor Streams:** Each actor's effects form an independent, ordered sequence with `actor_seq` (0, 1, 2...).
+2. **Recorded Interleaving Schedule:** The global effect log preserves the exact interleaving order `seq` (0, 1, 2...).
+3. **Deterministic Replay Scheduler:** When multiple actors issue concurrent requests during replay, the scheduler substitutes effects according to the recorded interleaving schedule, ensuring deterministic replay regardless of thread timing variations.
 
 ---
 

@@ -11,6 +11,7 @@ type Step struct {
 	Name     string            `json:"name"`
 	Root     string            `json:"root"`    // hex world hash
 	Effects  int               `json:"effects"` // effect count at end of step
+	Actor    string            `json:"actor,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 

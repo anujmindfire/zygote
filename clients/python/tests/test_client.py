@@ -52,5 +52,34 @@ class TestZygoteClient(unittest.TestCase):
         self.assertEqual(ctx.exception.code, -32600)
         self.assertIn("divergence", ctx.exception.message)
 
+    def test_actor_params(self):
+        mock_res1 = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"value": base64.b64encode(b"WorkerAnswer").decode("utf-8")}
+        }
+        mock_res2 = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {"match": True}
+        }
+        stdin = io.StringIO(json.dumps(mock_res1) + "\n" + json.dumps(mock_res2) + "\n")
+        stdout = io.StringIO()
+
+        client = ZygoteClient(stdin=stdin, stdout=stdout)
+
+        # Call effect with actor
+        res_bytes = client.effect("tool:read", "file1", b"path", actor="worker-1")
+        self.assertEqual(res_bytes, b"WorkerAnswer")
+
+        # Call step with actor
+        res_step = client.step("step-alpha", actor="worker-1")
+        self.assertTrue(res_step["match"])
+
+        lines = [json.loads(line) for line in stdout.getvalue().strip().split("\n")]
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0]["params"]["actor"], "worker-1")
+        self.assertEqual(lines[1]["params"]["actor"], "worker-1")
+
 if __name__ == '__main__':
     unittest.main()

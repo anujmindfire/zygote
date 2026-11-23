@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 )
 
 // Handler interface defines how the server responds to JSON-RPC methods.
@@ -15,10 +16,18 @@ type Handler interface {
 	Step(name string) (*StepResult, error)
 }
 
+// ActorHandler extends Handler to support multi-actor effects and steps (FR-8.6, OD-4).
+type ActorHandler interface {
+	Handler
+	EffectWithActor(actor, op, key string, value []byte) ([]byte, error)
+	StepWithActor(actor, name string) (*StepResult, error)
+}
+
 // Server is a JSON-RPC 2.0 server over line-delimited stdio.
 type Server struct {
 	in      io.Reader
 	out     io.Writer
+	outMu   sync.Mutex
 	handler Handler
 }
 
@@ -85,7 +94,14 @@ func (s *Server) handleRequest(req *Request) error {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			res.Error = &Error{Code: ErrInvalidParams, Message: "Invalid effect params"}
 		} else {
-			val, err := s.handler.Effect(p.Op, p.Key, p.Value)
+			actor := p.GetActor()
+			var val []byte
+			var err error
+			if ah, ok := s.handler.(ActorHandler); ok && actor != "" {
+				val, err = ah.EffectWithActor(actor, p.Op, p.Key, p.Value)
+			} else {
+				val, err = s.handler.Effect(p.Op, p.Key, p.Value)
+			}
 			if err != nil {
 				return err // Fail closed immediately, propagate Go error
 			}
@@ -97,7 +113,14 @@ func (s *Server) handleRequest(req *Request) error {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			res.Error = &Error{Code: ErrInvalidParams, Message: "Invalid step params"}
 		} else {
-			result, err := s.handler.Step(p.Name)
+			actor := p.GetActor()
+			var result *StepResult
+			var err error
+			if ah, ok := s.handler.(ActorHandler); ok && actor != "" {
+				result, err = ah.StepWithActor(actor, p.Name)
+			} else {
+				result, err = s.handler.Step(p.Name)
+			}
 			if err != nil {
 				return err // Fail closed immediately, propagate Go error
 			}
@@ -120,6 +143,9 @@ func (s *Server) handleRequest(req *Request) error {
 		return err
 	}
 	out = append(out, '\n')
+
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	_, err = s.out.Write(out)
 
 	return err
