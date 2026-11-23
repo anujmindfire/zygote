@@ -80,6 +80,16 @@
           "actor": {
             "type": "string"
           },
+          "parent_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
           "metadata": {
             "type": "object",
             "additionalProperties": {

@@ -16,11 +16,12 @@ type Handler interface {
 	Step(name string) (*StepResult, error)
 }
 
-// ActorHandler extends Handler to support multi-actor effects and steps (FR-8.6, OD-4).
+// ActorHandler extends Handler to support multi-actor effects and nested steps (FR-8.6, FR-3.10).
 type ActorHandler interface {
 	Handler
 	EffectWithActor(actor, op, key string, value []byte) ([]byte, error)
 	StepWithActor(actor, name string) (*StepResult, error)
+	StepWithParent(actor, name string, parentID *int) (*StepResult, error)
 }
 
 // Server is a JSON-RPC 2.0 server over line-delimited stdio.
@@ -114,10 +115,11 @@ func (s *Server) handleRequest(req *Request) error {
 			res.Error = &Error{Code: ErrInvalidParams, Message: "Invalid step params"}
 		} else {
 			actor := p.GetActor()
+			parentID := p.GetParentID()
 			var result *StepResult
 			var err error
-			if ah, ok := s.handler.(ActorHandler); ok && actor != "" {
-				result, err = ah.StepWithActor(actor, p.Name)
+			if ah, ok := s.handler.(ActorHandler); ok && (actor != "" || parentID != nil) {
+				result, err = ah.StepWithParent(actor, p.Name, parentID)
 			} else {
 				result, err = s.handler.Step(p.Name)
 			}

@@ -3,6 +3,7 @@ package trace
 import (
 	"encoding/hex"
 	"fmt"
+	"sort"
 
 	"github.com/mindfire/zygote/journal"
 	"github.com/mindfire/zygote/vfs"
@@ -45,20 +46,27 @@ func (r *RunRecorder) Recorder() *journal.Recorder {
 
 // Step captures the current world state and effect count as a named boundary.
 func (r *RunRecorder) Step(name string) {
-	r.StepWithActor(name, "")
+	r.StepWithParent(name, "", nil)
 }
 
 // StepWithActor captures the current world state and effect count as a named boundary for an actor.
 func (r *RunRecorder) StepWithActor(name, actor string) {
+	r.StepWithParent(name, actor, nil)
+}
+
+// StepWithParent captures the current world state and effect count as a named boundary,
+// attributing it to an actor and an optional parent step ID (FR-3.10).
+func (r *RunRecorder) StepWithParent(name, actor string, parentID *int) {
 	snap := r.world.Snapshot()
 	effs := len(r.journal.Entries())
 
 	step := Step{
-		N:       r.stepBase,
-		Name:    name,
-		Root:    hex.EncodeToString(snap.Root[:]),
-		Effects: effs,
-		Actor:   actor,
+		N:        r.stepBase,
+		Name:     name,
+		Root:     hex.EncodeToString(snap.Root[:]),
+		Effects:  effs,
+		Actor:    actor,
+		ParentID: parentID,
 	}
 
 	r.steps = append(r.steps, step)
@@ -66,15 +74,102 @@ func (r *RunRecorder) StepWithActor(name, actor string) {
 }
 
 // Recording returns the finalized manifest of all steps and effects.
+// Steps are structured into a hierarchical step tree (FR-3.10).
 func (r *RunRecorder) Recording() Recording {
 	return Recording{
 		Version:       1,
 		HashAlgorithm: "blake3",
 		Producer:      "zygote-cli",
 		Meta:          r.meta,
-		Steps:         r.steps,
+		Steps:         BuildStepTree(r.steps),
 		Effects:       r.journal.Entries(),
 	}
+}
+
+// BuildStepTree builds a hierarchical step tree from a slice of steps.
+// Top-level steps (ParentID == nil) are returned with their nested descendants
+// populated in Children recursively. If all steps are already top-level, it returns them as-is.
+func BuildStepTree(steps []Step) []Step {
+	if len(steps) == 0 {
+		return nil
+	}
+
+	hasParent := false
+	for _, s := range steps {
+		if s.ParentID != nil {
+			hasParent = true
+			break
+		}
+	}
+	if !hasParent {
+		out := make([]Step, len(steps))
+		copy(out, steps)
+		return out
+	}
+
+	// Group children by parent ID
+	childrenOf := make(map[int][]Step)
+	byID := make(map[int]Step, len(steps))
+	for _, s := range steps {
+		sCopy := s
+		sCopy.Children = nil
+		byID[s.N] = sCopy
+		if s.ParentID != nil {
+			childrenOf[*s.ParentID] = append(childrenOf[*s.ParentID], sCopy)
+		}
+	}
+
+	var attachChildren func(s Step) Step
+	attachChildren = func(s Step) Step {
+		directChildren := childrenOf[s.N]
+		if len(directChildren) == 0 {
+			s.Children = nil
+			return s
+		}
+		s.Children = make([]Step, len(directChildren))
+		for i, child := range directChildren {
+			s.Children[i] = attachChildren(child)
+		}
+		return s
+	}
+
+	var rootSteps []Step
+	for _, s := range steps {
+		if s.ParentID == nil {
+			rootSteps = append(rootSteps, attachChildren(s))
+		} else if _, ok := byID[*s.ParentID]; !ok {
+			// Orphan step whose parent was not found: preserve at root
+			rootSteps = append(rootSteps, attachChildren(s))
+		}
+	}
+
+	return rootSteps
+}
+
+// FlattenSteps extracts all steps from a hierarchical tree in chronological order by N.
+func FlattenSteps(steps []Step) []Step {
+	var out []Step
+	var walk func(s Step)
+	walk = func(s Step) {
+		stepCopy := s
+		stepCopy.Children = nil
+		out = append(out, stepCopy)
+		for _, child := range s.Children {
+			walk(child)
+		}
+	}
+	for _, s := range steps {
+		walk(s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].N < out[j].N
+	})
+	return out
+}
+
+// AllSteps returns all steps in the recording flattened in chronological order.
+func (r Recording) AllSteps() []Step {
+	return FlattenSteps(r.Steps)
 }
 
 // RunReplayer orchestrates the replay of a run, checking step boundaries against a Bundle.
@@ -82,17 +177,19 @@ type RunReplayer struct {
 	bundle   *Bundle
 	replayer *journal.Replayer
 	world    *vfs.World
+	allSteps []Step
 	stepIdx  int
 }
 
 // Replay initializes a RunReplayer from a Bundle.
 func Replay(store vfs.Store, bundle *Bundle) (*RunReplayer, error) {
-	if len(bundle.Recording.Steps) == 0 {
+	allSteps := bundle.Recording.AllSteps()
+	if len(allSteps) == 0 {
 		return nil, fmt.Errorf("bundle has no steps")
 	}
 
 	// Initialize the world at the first step
-	rootHex := bundle.Recording.Steps[0].Root
+	rootHex := allSteps[0].Root
 	hBytes, err := hex.DecodeString(rootHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid root hash in bundle: %w", err)
@@ -106,6 +203,7 @@ func Replay(store vfs.Store, bundle *Bundle) (*RunReplayer, error) {
 		bundle:   bundle,
 		replayer: journal.NewReplayer(bundle.Recording.Effects),
 		world:    world,
+		allSteps: allSteps,
 		stepIdx:  1, // We start checking from step 1 (step 0 is the init state)
 	}, nil
 }
@@ -122,25 +220,47 @@ func (r *RunReplayer) World() *vfs.World {
 
 // Step verifies the current world against the next expected step in the bundle.
 func (r *RunReplayer) Step(name string) (Check, error) {
-	return r.StepWithActor(name, "")
+	return r.StepWithParent(name, "", nil)
 }
 
 // StepWithActor verifies the current world against the next expected step in the bundle,
 // validating the actor if attributed.
 func (r *RunReplayer) StepWithActor(name, actor string) (Check, error) {
-	if r.stepIdx >= len(r.bundle.Recording.Steps) {
-		return Check{}, &journal.DivergenceError{Class: journal.ClassExhausted, Message: "agent executed more steps than recorded", Step: r.stepIdx}
+	return r.StepWithParent(name, actor, nil)
+}
+
+// StepWithParent verifies both top-level and nested step world hashes, actor,
+// and parent step ID during replay (FR-3.10).
+func (r *RunReplayer) StepWithParent(name, actor string, parentID *int) (Check, error) {
+	if r.stepIdx >= len(r.allSteps) {
+		return Check{}, &journal.DivergenceError{
+			Class:   journal.ClassExhausted,
+			Message: "agent executed more steps than recorded",
+			Step:    r.stepIdx,
+		}
 	}
 
-	expectedStep := r.bundle.Recording.Steps[r.stepIdx]
+	expectedStep := r.allSteps[r.stepIdx]
 	if expectedStep.Name != name {
-		return Check{}, &journal.DivergenceError{Class: journal.ClassStepMismatch, Message: fmt.Sprintf("expected %q, got %q", expectedStep.Name, name), Step: r.stepIdx}
+		return Check{}, &journal.DivergenceError{
+			Class:   journal.ClassStepMismatch,
+			Message: fmt.Sprintf("expected %q, got %q", expectedStep.Name, name),
+			Step:    r.stepIdx,
+		}
 	}
 
 	if expectedStep.Actor != "" && actor != "" && expectedStep.Actor != actor {
 		return Check{}, &journal.DivergenceError{
 			Class:   journal.ClassStepMismatch,
 			Message: fmt.Sprintf("step %q expected actor %q, got %q", name, expectedStep.Actor, actor),
+			Step:    r.stepIdx,
+		}
+	}
+
+	if expectedStep.ParentID != nil && parentID != nil && *expectedStep.ParentID != *parentID {
+		return Check{}, &journal.DivergenceError{
+			Class:   journal.ClassStepMismatch,
+			Message: fmt.Sprintf("step %q expected parent_id %d, got %d", name, *expectedStep.ParentID, *parentID),
 			Step:    r.stepIdx,
 		}
 	}

@@ -81,5 +81,25 @@ class TestZygoteClient(unittest.TestCase):
         self.assertEqual(lines[0]["params"]["actor"], "worker-1")
         self.assertEqual(lines[1]["params"]["actor"], "worker-1")
 
+    def test_nested_step_params(self):
+        mock_res = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"match": True}
+        }
+        stdin = io.StringIO(json.dumps(mock_res) + "\n")
+        stdout = io.StringIO()
+
+        client = ZygoteClient(stdin=stdin, stdout=stdout)
+
+        # Call step with parent_id
+        res_step = client.step("child-step", actor="sub-1", parent_id=2)
+        self.assertTrue(res_step["match"])
+
+        sent = json.loads(stdout.getvalue().strip())
+        self.assertEqual(sent["params"]["name"], "child-step")
+        self.assertEqual(sent["params"]["actor"], "sub-1")
+        self.assertEqual(sent["params"]["parent_id"], 2)
+
 if __name__ == '__main__':
     unittest.main()

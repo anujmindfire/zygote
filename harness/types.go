@@ -72,6 +72,8 @@ type StepParams struct {
 	Name     string `json:"name"`
 	Actor    string `json:"actor,omitempty"`
 	ThreadID string `json:"thread_id,omitempty"` // alias for actor
+	ParentID *int   `json:"parent_id,omitempty"`
+	Parent   *int   `json:"parent,omitempty"`    // alias for parent_id
 }
 
 // GetActor returns the actor identifier or thread_id if specified.
@@ -80,6 +82,14 @@ func (p *StepParams) GetActor() string {
 		return p.Actor
 	}
 	return p.ThreadID
+}
+
+// GetParentID returns the parent step ID if specified.
+func (p *StepParams) GetParentID() *int {
+	if p.ParentID != nil {
+		return p.ParentID
+	}
+	return p.Parent
 }
 
 // StepResult payload.

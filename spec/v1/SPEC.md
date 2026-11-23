@@ -144,6 +144,16 @@ The manifest is written to `trace.json` within each run recording and bundle.
             "type": "string",
             "description": "Optional actor/thread identifier attributing the step"
           },
+          "parent_id": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional parent step ID (n) for hierarchical sub-agent steps"
+          },
+          "children": {
+            "type": "array",
+            "items": { "type": "object" },
+            "description": "Nested child sub-steps executed under this step"
+          },
           "metadata": {
             "type": "object",
             "additionalProperties": { "type": "string" }
@@ -274,7 +284,8 @@ Marks a logical checkpoint boundary and compares or captures world state.
   ```json
   {
     "name": "plan_phase",
-    "actor": "worker-1"
+    "actor": "worker-1",
+    "parent_id": 0
   }
   ```
 - **Result:**
@@ -286,8 +297,8 @@ Marks a logical checkpoint boundary and compares or captures world state.
   }
   ```
 - **Semantics:**
-  - **On Record:** Harness snapshots the current Virtual File System root hash, captures step boundary, and records optional actor attribution.
-  - **On Replay:** Harness compares the replayed root hash and actor against the recorded step boundary. If unequal, triggers `world-mismatch` or `step-mismatch`.
+  - **On Record:** Harness snapshots the current Virtual File System root hash, captures step boundary, and records optional actor attribution and hierarchical parent step ID (FR-3.10).
+  - **On Replay:** Harness compares the replayed root hash, actor, and parent ID against the recorded step boundary. If unequal, triggers `world-mismatch` or `step-mismatch`.
 
 ### 5.1 Multi-Actor Concurrency & Interleaving Model (OD-4, §8.6)
 In multi-agent and multi-threaded agent systems, concurrent actors submit non-deterministic effects in interleaved order:

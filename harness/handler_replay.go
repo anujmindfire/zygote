@@ -33,12 +33,17 @@ func (h *ReplayHandler) EffectWithActor(actor, op, key string, _ []byte) ([]byte
 
 // Step verifies the agent's world against the recording.
 func (h *ReplayHandler) Step(name string) (*StepResult, error) {
-	return h.StepWithActor("", name)
+	return h.StepWithParent("", name, nil)
 }
 
 // StepWithActor verifies the agent's world against the recording for a specific actor.
 func (h *ReplayHandler) StepWithActor(actor, name string) (*StepResult, error) {
-	chk, err := h.r.StepWithActor(name, actor)
+	return h.StepWithParent(actor, name, nil)
+}
+
+// StepWithParent verifies both top-level and nested step world hashes, actor, and parent ID.
+func (h *ReplayHandler) StepWithParent(actor, name string, parentID *int) (*StepResult, error) {
+	chk, err := h.r.StepWithParent(name, actor, parentID)
 	if err != nil {
 		return nil, err
 	}

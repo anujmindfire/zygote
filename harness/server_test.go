@@ -57,6 +57,7 @@ type mockActorHandler struct {
 	mu            sync.Mutex
 	lastActor     string
 	lastStepActor string
+	lastParentID  *int
 }
 
 func (m *mockActorHandler) EffectWithActor(actor, op, key string, value []byte) ([]byte, error) {
@@ -67,8 +68,13 @@ func (m *mockActorHandler) EffectWithActor(actor, op, key string, value []byte) 
 }
 
 func (m *mockActorHandler) StepWithActor(actor, name string) (*StepResult, error) {
+	return m.StepWithParent(actor, name, nil)
+}
+
+func (m *mockActorHandler) StepWithParent(actor, name string, parentID *int) (*StepResult, error) {
 	m.mu.Lock()
 	m.lastStepActor = actor
+	m.lastParentID = parentID
 	m.mu.Unlock()
 	return m.Step(name)
 }

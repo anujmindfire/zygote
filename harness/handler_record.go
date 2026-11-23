@@ -35,12 +35,17 @@ func (h *RecordHandler) EffectWithActor(actor, op, key string, value []byte) ([]
 
 // Step captures the world state boundary.
 func (h *RecordHandler) Step(name string) (*StepResult, error) {
-	return h.StepWithActor("", name)
+	return h.StepWithParent("", name, nil)
 }
 
 // StepWithActor captures the world state boundary for a specific actor.
 func (h *RecordHandler) StepWithActor(actor, name string) (*StepResult, error) {
-	h.r.StepWithActor(name, actor)
+	return h.StepWithParent(actor, name, nil)
+}
+
+// StepWithParent captures the world state boundary for a specific actor and parent step ID.
+func (h *RecordHandler) StepWithParent(actor, name string, parentID *int) (*StepResult, error) {
+	h.r.StepWithParent(name, actor, parentID)
 
 	// Record doesn't match against anything, just returns success.
 	// We return the actual hash of the step we just took.

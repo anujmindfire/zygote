@@ -321,4 +321,49 @@ func TestCLIZstdCompression(t *testing.T) {
 	}
 }
 
+func TestCLINestedStepsTree(t *testing.T) {
+	zyg := buildZygBinary(t)
+	tmpDir := t.TempDir()
+
+	bundlePath := filepath.Join(tmpDir, "nested.zip")
+	store := vfs.NewMemStore()
+	r := trace.Record(store)
+	r.Set("agent", "tree-agent")
+
+	r.Step("init") // N: 0
+	parentID := 1
+	r.Step("plan_workflow")                                          // N: 1
+	r.StepWithParent("fetch_data", "sub-worker-1", &parentID)        // N: 2, child of 1
+	r.StepWithParent("process_records", "sub-worker-2", &parentID)   // N: 3, child of 1
+	r.Step("finalize_output")                                        // N: 4
+
+	rec := r.Recording()
+	if err := trace.ExportFile(bundlePath, store, rec); err != nil {
+		t.Fatalf("ExportFile failed: %v", err)
+	}
+
+	cmd := exec.Command(zyg, "steps", bundlePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zyg steps failed: %v\noutput: %s", err, string(out))
+	}
+
+	outStr := string(out)
+	if !bytes.Contains(out, []byte("init")) || !bytes.Contains(out, []byte("plan_workflow")) {
+		t.Fatalf("missing top-level steps in output: %s", outStr)
+	}
+
+	// Verify tree-view indentation and branch connectors for nested sub-steps
+	if !bytes.Contains(out, []byte("├── fetch_data")) {
+		t.Errorf("expected branch connector '├── fetch_data' in tree output, got:\n%s", outStr)
+	}
+	if !bytes.Contains(out, []byte("└── process_records")) {
+		t.Errorf("expected leaf branch connector '└── process_records' in tree output, got:\n%s", outStr)
+	}
+	if !bytes.Contains(out, []byte("[sub-worker-1]")) || !bytes.Contains(out, []byte("[sub-worker-2]")) {
+		t.Errorf("expected actor attribution in output, got:\n%s", outStr)
+	}
+}
+
+
 

@@ -115,10 +115,12 @@ class ZygoteClient:
         res = self._call("handshake", {"version": version})
         return res.get("version", version)
 
-    def step(self, name: str, actor: Optional[str] = None) -> Dict[str, Any]:
+    def step(self, name: str, actor: Optional[str] = None, parent_id: Optional[int] = None) -> Dict[str, Any]:
         params = {"name": name}
         if actor is not None:
             params["actor"] = actor
+        if parent_id is not None:
+            params["parent_id"] = parent_id
         return self._call("step", params)
 
     def effect(self, op: str, key: str, value: Optional[bytes] = None, actor: Optional[str] = None) -> bytes:

@@ -365,4 +365,172 @@ func TestMultiActorRecordingAndReplay(t *testing.T) {
 	}
 }
 
+func TestNestedSteps_TreeBuildAndFlatten(t *testing.T) {
+	p1 := 1
+	p2 := 2
+	steps := []trace.Step{
+		{N: 0, Name: "init"},
+		{N: 1, Name: "task_plan"},
+		{N: 2, Name: "subagent_research", ParentID: &p1},
+		{N: 3, Name: "subagent_query_db", ParentID: &p2}, // nested sub-sub-step
+		{N: 4, Name: "subagent_summarize", ParentID: &p1},
+		{N: 5, Name: "task_execute"},
+	}
+
+	tree := trace.BuildStepTree(steps)
+	if len(tree) != 3 {
+		t.Fatalf("expected 3 top-level steps, got %d", len(tree))
+	}
+
+	// Step 0: init
+	if tree[0].N != 0 || len(tree[0].Children) != 0 {
+		t.Fatalf("unexpected step 0: %+v", tree[0])
+	}
+
+	// Step 1: task_plan with 2 children
+	if tree[1].N != 1 || len(tree[1].Children) != 2 {
+		t.Fatalf("expected step 1 to have 2 children, got %d", len(tree[1].Children))
+	}
+
+	// Subagent research has 1 child (sub-sub-step)
+	if tree[1].Children[0].N != 2 || len(tree[1].Children[0].Children) != 1 {
+		t.Fatalf("expected step 2 to have 1 child, got %d", len(tree[1].Children[0].Children))
+	}
+	if tree[1].Children[0].Children[0].N != 3 {
+		t.Fatalf("expected sub-sub-step 3, got %d", tree[1].Children[0].Children[0].N)
+	}
+
+	// Step 5: task_execute
+	if tree[2].N != 5 {
+		t.Fatalf("expected step 5, got %d", tree[2].N)
+	}
+
+	// Test FlattenSteps reproduces original order
+	flattened := trace.FlattenSteps(tree)
+	if len(flattened) != 6 {
+		t.Fatalf("expected 6 flattened steps, got %d", len(flattened))
+	}
+	for i := 0; i < 6; i++ {
+		if flattened[i].N != i {
+			t.Fatalf("step %d index mismatch in flattened: %d", i, flattened[i].N)
+		}
+	}
+}
+
+func TestNestedSteps_CanonicalJSONRFC8785(t *testing.T) {
+	p := 1
+	rec := trace.Recording{
+		Version:       1,
+		HashAlgorithm: "blake3",
+		Producer:      "zygote-cli",
+		Steps: []trace.Step{
+			{N: 0, Name: "init", Root: "ec2bd03bf86b935fa34d71ad7ebb049f1f10f87d343e521511d8f9e6625620cd", Effects: 0},
+			{
+				N:       1,
+				Name:    "parent_step",
+				Root:    "ec2bd03bf86b935fa34d71ad7ebb049f1f10f87d343e521511d8f9e6625620cd",
+				Effects: 1,
+				Children: []trace.Step{
+					{
+						N:        2,
+						Name:     "child_substep",
+						Root:     "ec2bd03bf86b935fa34d71ad7ebb049f1f10f87d343e521511d8f9e6625620cd",
+						Effects:  1,
+						Actor:    "sub-agent-1",
+						ParentID: &p,
+					},
+				},
+			},
+		},
+	}
+
+	canon, err := trace.CanonicalizeManifest(rec)
+	if err != nil {
+		t.Fatalf("CanonicalizeManifest failed: %v", err)
+	}
+
+	canonStr := string(canon)
+	if !strings.Contains(canonStr, `"children":[{"actor":"sub-agent-1"`) {
+		t.Fatalf("canonical JSON does not format nested children properly: %s", canonStr)
+	}
+
+	// Verify signing and verification over canonical manifest with nested steps
+	pub, priv, err := trace.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sig, err := trace.SignManifest(rec, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !trace.VerifyManifest(rec, sig, pub) {
+		t.Fatal("VerifyManifest failed on nested step recording")
+	}
+}
+
+func TestNestedSteps_ReplayVerification(t *testing.T) {
+	store1 := vfs.NewMemStore()
+	r := trace.Record(store1)
+
+	r.Step("init") // N: 0
+	parentID := 1
+	r.Step("plan")                                                        // N: 1
+	_ = r.World().WriteFile("sub.txt", []byte("sub-data"), 0644)
+	r.StepWithParent("sub-search", "subagent-1", &parentID)              // N: 2
+	_ = r.World().WriteFile("final.txt", []byte("final-data"), 0644)
+	r.Step("finish")                                                     // N: 3
+
+	rec := r.Recording()
+	tmpDir := t.TempDir()
+	bundlePath := filepath.Join(tmpDir, "nested_run.zip")
+	if err := trace.ExportFile(bundlePath, store1, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	store2 := vfs.NewMemStore()
+	bundle, err := trace.ImportFile(bundlePath, store2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Replay and verify all steps (both top-level and nested)
+	replayer, err := trace.Replay(store2, &bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chk1, err := replayer.Step("plan")
+	if err != nil || !chk1.Match {
+		t.Fatalf("Step 1 failed: %v", err)
+	}
+
+	_ = replayer.World().WriteFile("sub.txt", []byte("sub-data"), 0644)
+	chk2, err := replayer.StepWithParent("sub-search", "subagent-1", &parentID)
+	if err != nil || !chk2.Match {
+		t.Fatalf("Nested step 2 verification failed: %v", err)
+	}
+
+	_ = replayer.World().WriteFile("final.txt", []byte("final-data"), 0644)
+	chk3, err := replayer.Step("finish")
+	if err != nil || !chk3.Match {
+		t.Fatalf("Step 3 failed: %v", err)
+	}
+
+	// Test nested divergence: world hash divergence inside nested sub-step
+	store3 := vfs.NewMemStore()
+	bundle3, _ := trace.ImportFile(bundlePath, store3)
+	replayerDivergent, _ := trace.Replay(store3, &bundle3)
+
+	_, _ = replayerDivergent.Step("plan")
+	// Sub-agent writes different data!
+	_ = replayerDivergent.World().WriteFile("sub.txt", []byte("CORRUPTED_SUB_DATA"), 0644)
+	_, err = replayerDivergent.StepWithParent("sub-search", "subagent-1", &parentID)
+	if err == nil {
+		t.Fatal("expected divergence on corrupted nested sub-step world hash")
+	}
+}
+
+
 

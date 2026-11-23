@@ -76,10 +76,13 @@ export class ZygoteClient {
         return res?.version ?? version;
     }
 
-    async step(name: string, actor?: string): Promise<any> {
+    async step(name: string, actor?: string, parentId?: number): Promise<any> {
         const params: any = { name };
         if (actor !== undefined) {
             params.actor = actor;
+        }
+        if (parentId !== undefined) {
+            params.parent_id = parentId;
         }
         return await this.call('step', params);
     }
