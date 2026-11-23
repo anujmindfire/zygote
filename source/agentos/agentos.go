@@ -36,7 +36,7 @@ const (
 )
 
 // ErrPathEscape indicates traversal.
-var ErrPathEscape = errors.New("security: path traversal attempted")
+var ErrPathEscape = source.ErrPathEscape
 
 var _ source.Source = (*Adapter)(nil)
 

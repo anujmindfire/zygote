@@ -3,9 +3,13 @@ package source
 
 import (
 	"context"
+	"errors"
 
 	"github.com/mindfire/zygote/vfs"
 )
+
+// ErrPathEscape indicates that a path traversal or escape was attempted (FR-7.5, NFR-4.1).
+var ErrPathEscape = errors.New("security: path traversal attempted")
 
 // Tier classifies how faithfully an adapter observes an agent's environment
 type Tier string

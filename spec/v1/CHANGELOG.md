@@ -19,3 +19,4 @@ The specification format is versioned independently of the Go reference implemen
 - Optional Zstandard (zstd) CAS object compression for storage and bundle archives with transparent decompression (§4.3, FR-4.10).
 - Multi-actor concurrency model with per-actor journal streams, recorded interleaving schedules, and deterministic replay scheduler (§3.1, §5, FR-8.6, OD-4).
 - Hierarchical nested steps for sub-agent timelines (`parent_id`, `children`), tree-view CLI formatting, and comprehensive replay verification (§3.1, §5, FR-3.10).
+- Reusable Adapter Conformance Suite (`source/conformance`, `spec/conformance/adapter`) and Tier C OCI container adapter with full CI validation across all runtime adapters (§8, FR-7.8, NFR-6.4, NFR-6.6).

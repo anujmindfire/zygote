@@ -3,7 +3,6 @@ package daytona
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -18,7 +17,7 @@ import (
 )
 
 // ErrPathEscape indicates traversal.
-var ErrPathEscape = errors.New("security: path traversal attempted")
+var ErrPathEscape = source.ErrPathEscape
 
 var _ source.Source = (*Adapter)(nil)
 

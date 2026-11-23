@@ -330,3 +330,23 @@ A conforming implementation of Zygote:
 2. Must validate bundles per §4, accepting valid bundles and rejecting corrupt, truncated, or traversal bundles matching fixtures in `spec/conformance/bundles/`.
 3. Must reproduce the exact divergence classification verdicts on replaying recordings in `spec/conformance/recordings/`.
 4. Must pass all test vectors in `spec/conformance/` without error.
+5. Must validate Source adapters against the Adapter Conformance Suite (`source/conformance` or `spec/conformance/adapter`, FR-7.8).
+
+---
+
+## 8. Source Adapter Conformance (FR-7.8, §8.5, §11.5)
+
+To guarantee universal runtime-agnostic recording across sandboxes and environments (localdir, agentOS, E2B, Daytona, OCI):
+1. **Load and Apply Roundtrip:**
+   - `Load(ctx, w)` must faithfully ingest environment state into `vfs.World`.
+   - `Apply(ctx, w)` must apply mutations from `vfs.World` back to the target sandbox or directory.
+2. **Path Traversal Protection (FR-7.5, NFR-4.1):**
+   - Adapters must strictly reject directory traversals (`..`), absolute path escapes, and null-byte injection during `Apply` with `source.ErrPathEscape`.
+3. **Boundaries and Exclusions (FR-7.2, FR-7.3):**
+   - Files exceeding `MaxFileSize` must be skipped and recorded in `ExcludedPaths`.
+   - Paths matching `ExcludeGlobs` patterns must be skipped.
+4. **Honest Fidelity Declaration (FR-7.7):**
+   - Must export a valid `Fidelity` declaration with tier `TierA`, `TierB`, or `TierC`.
+   - `limitations` must document non-captured capabilities (e.g., file permissions, transient memory, MaxFileSize, exclude globs).
+5. **Context Responsiveness:**
+   - Both `Load` and `Apply` must immediately abort when context is canceled.

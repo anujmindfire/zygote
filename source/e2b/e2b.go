@@ -33,7 +33,7 @@ const (
 )
 
 // ErrPathEscape indicates traversal.
-var ErrPathEscape = errors.New("security: path traversal attempted")
+var ErrPathEscape = source.ErrPathEscape
 
 var errTooLarge = errors.New("response exceeds size limit")
 

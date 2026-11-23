@@ -3,7 +3,6 @@ package localdir
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,7 +14,7 @@ import (
 )
 
 // ErrPathEscape indicates traversal.
-var ErrPathEscape = errors.New("security: path traversal attempted")
+var ErrPathEscape = source.ErrPathEscape
 
 // Adapter implements Source.
 type Adapter struct {

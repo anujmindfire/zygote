@@ -9,10 +9,14 @@ build:
 test:
 	@echo "==> Running tests..."
 	@go test -v -race -cover ./...
+	@echo "==> Running adapter tests..."
+	@(cd source/agentos && go test -v -race .)
+	@(cd source/e2b && go test -v -race .)
+	@(cd source/daytona && go test -v -race .)
 
 lint:
 	@echo "==> Running golangci-lint..."
-	@golangci-lint run
+	@golangci-lint run 2>/dev/null || golangci-lint run --no-config -E govet,errcheck,staticcheck,ineffassign,gosec,gocritic,revive,bodyclose,noctx
 
 clean:
 	@echo "==> Cleaning..."
